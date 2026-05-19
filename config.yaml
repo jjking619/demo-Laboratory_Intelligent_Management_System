@@ -1,0 +1,53 @@
+feishu:
+  host: "0.0.0.0"
+  port: 8266
+  status_report_url: "https://quectel.feishu.cn/base/workflow/webhook/event/MOafamaEhwMkcEhCGY8c7Btpn0d"
+  event_report_url: "https://quectel.feishu.cn/base/workflow/webhook/event/J6KuaLvIXw1DrVhigXBcp0rRnDf"
+
+camera:
+  discovery_enabled: true
+  ip: "auto"
+  discover_bind_ip: "0.0.0.0"
+  discover_timeout: 3
+  fallback_ip: "10.55.46.170"
+
+detectors:
+  person:
+    model_path: "../models/yolov8n.pt"
+    task: "detect"
+    device: "cpu"
+    conf: 0.45
+    iou: 0.5
+    imgsz: 320
+    classes: [0]
+    track: false
+    stride: 10
+    name: "PersonDetector"
+    class_names: {0: "Person"}
+
+  fire:
+    model_path: "../models/best.pt"
+    task: "detect"
+    device: "cpu"
+    conf: 0.25
+    iou: 0.5
+    imgsz: 320
+    classes: null
+    track: false
+    stride: 5
+    name: "FireDetector"
+    class_names: {0: "Fire", 1: "Smoke"}
+
+power:
+  no_person_hour: 17
+  no_person_seconds: 30
+
+gpio:
+  air_switch_line: 37
+  chip: "/dev/gpiochip4"
+  active_high: false
+
+keys:
+  key1_event: "/dev/input/event3"
+  key2_event: "/dev/input/event1"
+  long_press_seconds: 2.0
