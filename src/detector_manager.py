@@ -20,6 +20,7 @@ class AsyncDetector:
         self.output_queue = queue.Queue(maxsize=5)
         self.running = False
         self.thread = None
+
     def start(self):
         self.running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -28,11 +29,7 @@ class AsyncDetector:
     def stop(self):
         self.running = False
         # 清空输入队列以确保快速退出
-        while not self.input_queue.empty():
-            try:
-                self.input_queue.get_nowait()
-            except queue.Empty:
-                break
+        self.clear_pending()
         # 发送终止信号
         try:
             self.input_queue.put_nowait((None, None))
@@ -40,6 +37,20 @@ class AsyncDetector:
             pass
         if self.thread:
             self.thread.join(timeout=1)  # 减少超时时间到1秒
+
+    def clear_pending(self):
+        """清空待处理输入帧与历史输出结果，避免状态切换后处理旧数据。"""
+        while not self.input_queue.empty():
+            try:
+                self.input_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        while not self.output_queue.empty():
+            try:
+                self.output_queue.get_nowait()
+            except queue.Empty:
+                break
 
     def put_frame(self, frame_id, frame):
         """非阻塞放入帧，若队列满则丢弃旧帧（可选）"""

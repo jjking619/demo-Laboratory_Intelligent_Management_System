@@ -2,16 +2,62 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_URL="https://github.com/kane-ji_Quectel/Laboratory_Intelligent_Management_System.git"
+REPO_URL="https://github.com/jjking619/demo-Laboratory_Intelligent_Management_System.git"
 REPO_DIR_NAME="Laboratory_Intelligent_Management_System"
 PROJECT_ROOT="$SCRIPT_DIR"
 
-echo "0) 开始克隆仓库到：$CLONE_TARGET"
-git clone "$REPO_URL" "$CLONE_TARGET"
+SUDO=""
+if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+  SUDO="sudo"
+fi
 
+install_git_if_missing() {
+  if command -v git >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "未检测到 git，开始自动安装..."
+
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update
+    sudo apt-get install -y git ffmpeg
+  else
+    echo "错误：无法识别包管理器，请手动安装 git 后重试。"
+    exit 1
+  fi
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "错误：git 安装失败，请检查系统包管理器日志。"
+    exit 1
+  fi
+}
+
+echo "0) 检查仓库目录，必要时自动克隆"
+if [ ! -f "$PROJECT_ROOT/src/main.py" ] || [ ! -f "$PROJECT_ROOT/requirements.txt" ]; then
+  # 按需固定在当前用户 home 目录克隆，避免 /home 等目录权限问题
+  CLONE_PARENT="$HOME"
+  CLONE_TARGET="$CLONE_PARENT/$REPO_DIR_NAME"
+
+  if [ -d "$CLONE_TARGET" ] && [ -f "$CLONE_TARGET/src/main.py" ]; then
+    echo "检测到现有项目目录：$CLONE_TARGET，使用该目录继续部署。"
+  else
+    install_git_if_missing
+
+    # 先做免交互访问检查，避免 git 在终端中卡在 Username/Password 提示
+    if ! GIT_TERMINAL_PROMPT=0 git ls-remote "$REPO_URL" >/dev/null 2>&1; then
+      echo "错误：仓库不可匿名访问，可能是私有仓库、URL 不正确，或网络受限。"
+      echo "请确认 REPO_URL，或改用 SSH 地址并提前配置密钥。"
+      exit 1
+    fi
+
+    echo "开始克隆仓库到：$CLONE_TARGET"
+    git clone "$REPO_URL" "$CLONE_TARGET"
+  fi
+  PROJECT_ROOT="$CLONE_TARGET"
+fi
 
 USER_NAME="$(id -un)"
-VENV_DIR="$PROJECT_ROOT/.venv"
+VENV_DIR="$HOME/.venv"
 SERVICE_NAME="iot_system.service"
 SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME"
 
@@ -28,7 +74,7 @@ if [ ! -d "$VENV_DIR" ]; then
   python3 -m venv "$VENV_DIR"
 fi
 source "$VENV_DIR/bin/activate"
-pip install --upgrade pip
+pip install --upgrade pip 
 if [ -f "$PROJECT_ROOT/requirements.txt" ]; then
   pip install -r "$PROJECT_ROOT/requirements.txt"
 else
@@ -39,6 +85,7 @@ echo "2) 添加用户组与按键 GPIO 权限"
 sudo groupadd -f gpio || true
 sudo usermod -aG gpio "$USER_NAME" || true
 sudo usermod -aG input "$USER_NAME" || true
+sudo chmod 666 /dev/gpiochip4 || true
 
 echo "3) 创建 udev 规则（/etc/udev/rules.d/99-gpio.rules）"
 UDEV_RULE="KERNEL==\"gpiochip*\", GROUP=\"gpio\", MODE=\"0660\""
@@ -53,7 +100,6 @@ fi
 echo "4) 添加防火墙规则并保存（会覆盖 /etc/iptables/rules.v4，请确认需求）"
 sudo iptables -A INPUT -p tcp --dport 8266 -j ACCEPT || true
 sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT || true
-echo "提示：如果需要限制 ICMP 来源，请替换下面的 IP。"
 sudo iptables -A INPUT -p icmp --icmp-type echo-request -s 10.86.100.58 -j ACCEPT || true
 sudo sh -c 'iptables-save > /etc/iptables/rules.v4'
 

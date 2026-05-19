@@ -20,6 +20,7 @@ class IoTSystem:
         self.last_person_time = time.time()
         self.state_lock = threading.Lock()
         self._power_closed = False
+        self._last_device_open = None
         cfg = _load_config(config)
 
         # 无人检测触发配置（小时，秒）
@@ -250,48 +251,57 @@ class IoTSystem:
                 time.sleep(0.01)
                 continue
 
-            # 送入检测器 - 根据stride控制检测频率
-            if frame_id % self.person_detector.stride == 0:
-                self.person_detector.put_frame(frame_id, ip_frame)
-            if frame_id % self.fire_detector.stride == 0:
-                self.fire_detector.put_frame(frame_id, ip_frame)
+            device_open = (not self.power_closed)
+            if self._last_device_open is None or self._last_device_open != device_open:
+                self._on_device_status_changed(device_open)
+                self._last_device_open = device_open
+                # 状态切换后丢弃显示缓存，避免把旧结果绘制到新状态
+                latest_person = None
+                latest_fire = None
 
-            # 非阻塞获取结果（现在是元组）
-            person_res = self.person_detector.get_result()
-            fire_res   = self.fire_detector.get_result()
+            if device_open:
+                # 仅在设备开启时送入检测器并处理检测结果
+                if frame_id % self.person_detector.stride == 0:
+                    self.person_detector.put_frame(frame_id, ip_frame)
+                if frame_id % self.fire_detector.stride == 0:
+                    self.fire_detector.put_frame(frame_id, ip_frame)
 
-            # 检查人员检测结果
-            if person_res is not None:
-                person_frame_id, latest_person = person_res
-                if latest_person is not None and len(latest_person.get('boxes', [])) > 0:
-                    self.last_person_time = time.time()
+                person_res = self.person_detector.get_result()
+                fire_res = self.fire_detector.get_result()
 
-            # 检查火焰检测结果
-            if fire_res is not None:
-                _, latest_fire = fire_res
-                if latest_fire is not None and len(latest_fire.get('boxes', [])) > 0:
-                    # 检测到火灾，立即上报事件
-                    if not self.power_closed:
+                # 检查人员检测结果
+                if person_res is not None:
+                    _, latest_person = person_res
+                    if latest_person is not None and len(latest_person.get('boxes', [])) > 0:
+                        self.last_person_time = time.time()
+
+                # 检查火焰检测结果
+                if fire_res is not None:
+                    _, latest_fire = fire_res
+                    if latest_fire is not None and len(latest_fire.get('boxes', [])) > 0:
                         self.feishu.send_event("fire_detected", {"desc": "检测到火灾"})
                         self.power_closed = True
                         log_warn("检测到火灾，已上报事件！")
 
-            # 晚上21:00后无人检测逻辑
-            now = time.localtime()
-            current_time = time.time()
-            if now.tm_hour >= self.no_person_hour:
-                # 距离上次检测到人超过配置的阈值（秒）
-                if (current_time - self.last_person_time) > self.no_person_seconds and not self.power_closed:
-                    self.feishu.send_event("no_person", {"desc": "21:00后半小时无人"})
-                    self.power_closed = True
-                    log_warn("21:00后半小时无人，已上报事件！")
+                # 晚上21:00后无人检测逻辑
+                now = time.localtime()
+                current_time = time.time()
+                if now.tm_hour >= self.no_person_hour:
+                    # 距离上次检测到人超过配置的阈值（秒）
+                    if (current_time - self.last_person_time) > self.no_person_seconds and not self.power_closed:
+                        self.feishu.send_event("no_person", {"desc": "21:00后半小时无人"})
+                        self.power_closed = True
+                        log_warn("21:00后半小时无人，已上报事件！")
+            else:
+                # 设备关闭时主动清空检测结果，防止恢复供电后处理积压帧
+                self._clear_detector_buffers()
             # else:
             #     # 白天自动允许重新供电
             #     self.power_closed = False
 
             # ---------- 根据飞书指令控制是否显示检测结果 ----------
             display_frame = ip_frame.copy()
-            if self.feishu.device_open:
+            if device_open:
                 self._draw_results(display_frame, latest_person)
                 self._draw_results(display_frame, latest_fire)
             else:
@@ -306,6 +316,25 @@ class IoTSystem:
                 break
 
             frame_id += 1
+
+    def _clear_detector_buffers(self):
+        for det in (self.person_detector, self.fire_detector):
+            try:
+                if hasattr(det, 'clear_pending'):
+                    det.clear_pending()
+            except Exception as e:
+                log_warn(f"清空检测器缓存失败: {e}")
+
+    def _on_device_status_changed(self, is_open: bool):
+        if is_open:
+            # 恢复供电时重置无人计时并清空旧检测结果，避免立即触发关断
+            self.last_person_time = time.time()
+            self._clear_detector_buffers()
+            log_info("设备已开启：重置人员计时并清空检测缓存")
+        else:
+            # 关闭期间不做检测，清空积压结果防止状态恢复后误触发
+            self._clear_detector_buffers()
+            log_info("设备已关闭：暂停检测并清空检测缓存")
 
     def _draw_results(self, frame, detection_data):
         if detection_data is None:
