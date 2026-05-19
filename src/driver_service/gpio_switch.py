@@ -15,7 +15,6 @@ class GPIOSwitch:
 			raise RuntimeError(f"无法打开 GPIO {self.chip} line {self.line}: {e}")
 
 	def set_state(self, on: bool):
-		# 根据 active_high 决定写入的逻辑电平
 		if self._gpio is None:
 			raise RuntimeError("GPIO 未初始化")
 		# 当 active_high == True 时: on -> 高电平(True), off -> 低电平(False)
@@ -37,7 +36,7 @@ class GPIOSwitch:
 		self.set_state(False)
 
 	def get_state(self) -> bool:
-		# 优先读取硬件实际电平，返回布尔表示的逻辑状态（on/off）
+		# 返回布尔表示的逻辑状态（on/off）
 		if self._gpio is None:
 			raise RuntimeError("GPIO 未初始化")
 		try:

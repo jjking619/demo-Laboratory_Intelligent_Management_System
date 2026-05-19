@@ -29,8 +29,8 @@ detectors:
     model_path: "../models/best.pt"
     task: "detect"
     device: "cpu"
-    conf: 0.25
-    iou: 0.5
+    conf: 0.8
+    iou: 0.8
     imgsz: 320
     classes: null
     track: false
